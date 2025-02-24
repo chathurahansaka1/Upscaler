@@ -315,50 +315,66 @@
             
             // Use setTimeout to allow the loading indicator to render
             setTimeout(async () => {
-                // Reset canvas and draw image
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                ctx.drawImage(originalImage, 0, 0, canvas.width, canvas.height);
-                
-                // Get filter values
-                const brightness = parseInt(sliders.brightness.value);
-                const contrast = parseInt(sliders.contrast.value);
-                const saturation = parseInt(sliders.saturation.value);
-                const sharpness = parseInt(sliders.sharpness.value) / 100;
-                const noise = parseInt(sliders.noise.value);
-                const vignette = parseInt(sliders.vignette.value) / 100;
-                
-                // Apply basic filters using CSS filter for better performance
-                ctx.filter = `brightness(${100 + brightness}%) contrast(${100 + contrast}%) saturate(${100 + saturation}%)`;
-                ctx.drawImage(canvas, 0, 0);
-                ctx.filter = 'none';
-                
-                // Apply advanced filters only if needed
-                let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                
-                // Apply sharpness
-                if (sharpness > 0) {
-                    imageData = applySharpness(imageData, sharpness);
+                try {
+                    // Reset canvas and draw image
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(originalImage, 0, 0, canvas.width, canvas.height);
+                    
+                    // Get filter values
+                    const brightness = parseInt(sliders.brightness.value);
+                    const contrast = parseInt(sliders.contrast.value);
+                    const saturation = parseInt(sliders.saturation.value);
+                    const sharpness = parseInt(sliders.sharpness.value) / 100;
+                    const noise = parseInt(sliders.noise.value);
+                    const vignette = parseInt(sliders.vignette.value) / 100;
+                    
+                    // Apply basic filters (using a temporary canvas for better performance)
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = canvas.width;
+                    tempCanvas.height = canvas.height;
+                    const tempCtx = tempCanvas.getContext('2d');
+                    
+                    // Draw with CSS filters
+                    tempCtx.filter = `brightness(${100 + brightness}%) contrast(${100 + contrast}%) saturate(${100 + saturation}%)`;
+                    tempCtx.drawImage(canvas, 0, 0);
+                    
+                    // Reset main canvas and draw filtered image
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(tempCanvas, 0, 0);
+                    
+                    // Get image data for pixel manipulation
+                    let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    
+                    // Apply advanced filters only if needed
+                    
+                    // Apply sharpness
+                    if (sharpness > 0) {
+                        imageData = applySharpness(imageData, sharpness);
+                    }
+                    
+                    // Apply noise reduction
+                    if (noise > 0) {
+                        imageData = applyNoiseReduction(imageData, noise);
+                    }
+                    
+                    // Apply vignette
+                    if (vignette > 0) {
+                        imageData = applyVignette(imageData, vignette);
+                    }
+                    
+                    // Apply portrait mode if enabled - FIXED
+                    if (isPortraitMode) {
+                        imageData = applyPortraitEffect(imageData);
+                    }
+                    
+                    // Put processed image data back to canvas
+                    ctx.putImageData(imageData, 0, 0);
+                } catch (error) {
+                    console.error("Error applying filters:", error);
+                } finally {
+                    isProcessing = false;
+                    loadingIndicator.style.display = 'none';
                 }
-                
-                // Apply noise reduction
-                if (noise > 0) {
-                    imageData = applyNoiseReduction(imageData, noise);
-                }
-                
-                // Apply vignette
-                if (vignette > 0) {
-                    imageData = applyVignette(imageData, vignette);
-                }
-                
-                // Apply portrait mode if enabled
-                if (isPortraitMode) {
-                    imageData = applyPortraitEffect(imageData);
-                }
-                
-                ctx.putImageData(imageData, 0, 0);
-                
-                isProcessing = false;
-                loadingIndicator.style.display = 'none';
             }, 10);
         }
 
@@ -533,52 +549,78 @@
             return imageData;
         }
 
-        // Portrait Mode Effect (Skin tone enhancement and background blur)
+        // Portrait Mode Effect (Skin tone enhancement and background blur) - FIXED
         function applyPortraitEffect(imageData) {
             const data = imageData.data;
             const width = imageData.width;
             const height = imageData.height;
             const result = new Uint8ClampedArray(data);
             
+            // Face detection approximation (center weighted)
+            const centerX = width / 2;
+            const centerY = height / 2;
+            const faceRadius = Math.min(width, height) * 0.3; // Approximate face size
+            
             // Skin tone detection and enhancement
-            for (let i = 0; i < data.length; i += 4) {
-                const r = data[i];
-                const g = data[i + 1];
-                const b = data[i + 2];
-                
-                // Simple skin tone detection (can be improved)
-                const isSkin = r > 95 && g > 40 && b > 20 && 
-                               r > g && r > b && 
-                               Math.abs(r - g) > 15;
-                
-                if (isSkin) {
-                    // Enhance skin tones
-                    result[i] = Math.min(255, r * 1.1);        // Slightly increase red
-                    result[i + 1] = Math.min(255, g * 1.05);   // Slightly increase green
-                    result[i + 2] = Math.min(255, b * 0.95);   // Slightly decrease blue
-                } else {
-                    // Apply slight blur to non-skin areas (background)
-                    const x = (i / 4) % width;
-                    const y = Math.floor((i / 4) / width);
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const i = (y * width + x) * 4;
+                    const r = data[i];
+                    const g = data[i + 1];
+                    const b = data[i + 2];
                     
-                    // Simple 3x3 box blur for background
-                    if (x > 0 && x < width - 1 && y > 0 && y < height - 1) {
-                        let sumR = 0, sumG = 0, sumB = 0;
-                        
-                        // Sample 3x3 area
-                        for (let ky = -1; ky <= 1; ky++) {
-                            for (let kx = -1; kx <= 1; kx++) {
-                                const idx = ((y + ky) * width + (x + kx)) * 4;
-                                sumR += data[idx];
-                                sumG += data[idx + 1];
-                                sumB += data[idx + 2];
-                            }
+                    // Distance from center (assumed face position)
+                    const dx = x - centerX;
+                    const dy = y - centerY;
+                    const distFromCenter = Math.sqrt(dx * dx + dy * dy);
+                    
+                    // More accurate skin tone detection
+                    const isSkin = r > 95 && g > 40 && b > 20 && 
+                                  r > g && r > b && 
+                                  Math.abs(r - g) > 15 &&
+                                  r - g > 15 && r - b > 15 &&
+                                  Math.abs(r - g) > Math.abs(g - b);
+                    
+                    // Determine if the pixel is likely part of the foreground (face)
+                    const isForeground = distFromCenter < faceRadius || isSkin;
+                    
+                    if (isForeground) {
+                        // Enhance skin tones with smoother enhancement
+                        if (isSkin) {
+                            // Warm up the skin tones slightly
+                            result[i] = Math.min(255, r * 1.05);     // Slightly increase red
+                            result[i + 1] = Math.min(255, g * 1.02); // Slightly increase green
+                            result[i + 2] = Math.min(255, b * 0.95); // Slightly decrease blue
+                        } else {
+                            // Keep non-skin foreground as is
+                            result[i] = r;
+                            result[i + 1] = g;
+                            result[i + 2] = b;
                         }
+                    } else {
+                        // Apply stronger blur to background (further from center)
+                        const blurRadius = Math.min(3, Math.floor((distFromCenter - faceRadius) / 100) + 1);
                         
-                        // Apply blur
-                        result[i] = sumR / 9;
-                        result[i + 1] = sumG / 9;
-                        result[i + 2] = sumB / 9;
+                        if (x > blurRadius && x < width - blurRadius && y > blurRadius && y < height - blurRadius) {
+                            let sumR = 0, sumG = 0, sumB = 0;
+                            let count = 0;
+                            
+                            // Apply blur based on distance from center
+                            for (let ky = -blurRadius; ky <= blurRadius; ky++) {
+                                for (let kx = -blurRadius; kx <= blurRadius; kx++) {
+                                    const idx = ((y + ky) * width + (x + kx)) * 4;
+                                    sumR += data[idx];
+                                    sumG += data[idx + 1];
+                                    sumB += data[idx + 2];
+                                    count++;
+                                }
+                            }
+                            
+                            // Apply blur and slight darkening for depth
+                            result[i] = (sumR / count) * 0.9;
+                            result[i + 1] = (sumG / count) * 0.9;
+                            result[i + 2] = (sumB / count) * 0.9;
+                        }
                     }
                 }
             }
@@ -587,9 +629,15 @@
             return imageData;
         }
 
-        // Load and process image
+        // Load and process image - FIXED
         function loadImage(file) {
+            if (!file || !file.type.match('image.*')) {
+                alert("Please select a valid image file.");
+                return;
+            }
+            
             const reader = new FileReader();
+            loadingIndicator.style.display = 'flex'; // Show loading indicator
             
             reader.onload = function(event) {
                 const img = new Image();
@@ -597,10 +645,24 @@
                 img.onload = function() {
                     originalImage = img;
                     resetCanvas();
-                    applyFilters();
+                    resetFilters(); // Reset filters when new image is loaded
+                    applyFilters(); // Apply default filters
+                    loadingIndicator.style.display = 'none'; // Hide loading indicator
+                };
+                
+                img.onerror = function() {
+                    console.error("Error loading image");
+                    loadingIndicator.style.display = 'none';
+                    alert("Error loading image. Please try another file.");
                 };
                 
                 img.src = event.target.result;
+            };
+            
+            reader.onerror = function() {
+                console.error("Error reading file");
+                loadingIndicator.style.display = 'none';
+                alert("Error reading file. Please try again.");
             };
             
             reader.readAsDataURL(file);
@@ -622,28 +684,37 @@
         // Reset all sliders to default values
         function resetFilters() {
             Object.values(sliders).forEach(slider => {
-                slider.value = slider.id === 'saturation' ? 0 : 
-                               (slider.id === 'sharpness' || slider.id === 'noise' || slider.id === 'vignette') ? 0 : 0;
+                slider.value = 0; // Reset all sliders to 0
             });
             
             isPortraitMode = false;
             portraitToggle.classList.remove('active');
             
-            resetCanvas();
-            applyFilters();
+            if (originalImage) {
+                resetCanvas();
+                applyFilters();
+            }
         }
 
         // Save the processed image
         function saveImage() {
-            if (!originalImage) return;
+            if (!originalImage) {
+                alert("Please upload an image first.");
+                return;
+            }
             
-            const link = document.createElement('a');
-            link.download = 'cyber-enhanced.png';
-            link.href = canvas.toDataURL('image/png');
-            link.click();
+            try {
+                const link = document.createElement('a');
+                link.download = 'cyber-enhanced.png';
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+            } catch (error) {
+                console.error("Error saving image:", error);
+                alert("Error saving image. Please try again.");
+            }
         }
 
-        // Event Listeners
+        // Event Listeners - FIXED FILE INPUT
         fileInput.addEventListener('change', function(e) {
             if (e.target.files && e.target.files[0]) {
                 loadImage(e.target.files[0]);
@@ -656,8 +727,13 @@
             slider.addEventListener('input', debouncedApplyFilters);
         });
 
-        // Portrait mode toggle
+        // Portrait mode toggle - FIXED
         portraitToggle.addEventListener('click', function() {
+            if (!originalImage) {
+                alert("Please upload an image first.");
+                return;
+            }
+            
             isPortraitMode = !isPortraitMode;
             this.classList.toggle('active', isPortraitMode);
             applyFilters();
@@ -674,7 +750,7 @@
         
         container.addEventListener('dragover', function(e) {
             e.preventDefault();
-            this.style.borderColor = var(--neon-purple);
+            this.style.borderColor = '#bc13fe'; // Using var(--neon-purple) doesn't work in JS
         });
         
         container.addEventListener('dragleave', function(e) {
@@ -689,6 +765,31 @@
             if (e.dataTransfer.files && e.dataTransfer.files[0]) {
                 loadImage(e.dataTransfer.files[0]);
             }
+        });
+
+        // Display a welcome message
+        window.addEventListener('load', function() {
+            const welcomeMessage = document.createElement('div');
+            welcomeMessage.style.position = 'absolute';
+            welcomeMessage.style.top = '50%';
+            welcomeMessage.style.left = '50%';
+            welcomeMessage.style.transform = 'translate(-50%, -50%)';
+            welcomeMessage.style.textAlign = 'center';
+            welcomeMessage.style.color = 'var(--neon-blue)';
+            welcomeMessage.style.textShadow = '0 0 10px var(--neon-blue)';
+            welcomeMessage.style.fontSize = '1.5em';
+            welcomeMessage.innerHTML = 'Upload an image to get started';
+            
+            const canvasContainer = document.querySelector('.canvas-container');
+            canvasContainer.style.minHeight = '200px';
+            canvasContainer.appendChild(welcomeMessage);
+            
+            // Remove welcome message when an image is loaded
+            fileInput.addEventListener('change', function() {
+                if (welcomeMessage.parentNode) {
+                    welcomeMessage.parentNode.removeChild(welcomeMessage);
+                }
+            });
         });
     </script>
 </body>
