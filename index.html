@@ -100,11 +100,18 @@
             box-shadow: 0 0 10px var(--neon-blue);
         }
 
+        .canvas-container {
+            max-width: 100%;
+            margin: 20px 0;
+            border: 2px solid var(--neon-blue);
+            box-shadow: var(--cyber-glow);
+            position: relative;
+            overflow: hidden;
+        }
+
         canvas {
             max-width: 100%;
-            border: 2px solid var(--neon-blue);
-            margin: 20px 0;
-            box-shadow: var(--cyber-glow);
+            display: block;
         }
 
         button {
@@ -153,6 +160,76 @@
             border-bottom: 2px solid var(--neon-blue);
             padding-bottom: 5px;
         }
+
+        #fileInput {
+            display: none;
+        }
+
+        .loading {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: var(--neon-blue);
+            font-size: 24px;
+            z-index: 100;
+            display: none;
+        }
+
+        .loading::after {
+            content: '';
+            width: 30px;
+            height: 30px;
+            border: 3px solid var(--neon-blue);
+            border-top-color: transparent;
+            border-radius: 50%;
+            margin-left: 10px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            margin: 15px 0;
+        }
+
+        .toggle {
+            position: relative;
+            width: 60px;
+            height: 30px;
+            background: rgba(0, 243, 255, 0.2);
+            border-radius: 30px;
+            margin: 0 10px;
+            cursor: pointer;
+        }
+
+        .toggle::after {
+            content: '';
+            position: absolute;
+            width: 26px;
+            height: 26px;
+            background: var(--neon-blue);
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            transition: 0.3s;
+            box-shadow: 0 0 10px var(--neon-blue);
+        }
+
+        .toggle.active::after {
+            left: 32px;
+            background: var(--neon-purple);
+            box-shadow: 0 0 10px var(--neon-purple);
+        }
     </style>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500&display=swap" rel="stylesheet">
 </head>
@@ -168,148 +245,451 @@
                     <h3>BASIC SETTINGS</h3>
                     <label>Brightness: <input type="range" class="slider" id="brightness" min="-100" max="100" value="0"></label>
                     <label>Contrast: <input type="range" class="slider" id="contrast" min="-100" max="100" value="0"></label>
-                    <label>Pixel Density: <input type="range" class="slider" id="density" min="50" max="200" value="100"></label>
+                    <label>Saturation: <input type="range" class="slider" id="saturation" min="-100" max="100" value="0"></label>
+                    <div class="toggle-container">
+                        <span>Portrait Mode:</span>
+                        <div class="toggle" id="portraitToggle"></div>
+                    </div>
                 </div>
                 
                 <div class="control-group">
                     <h3>ADVANCED PROCESSING</h3>
                     <label>Sharpness: <input type="range" class="slider" id="sharpness" min="0" max="100" value="0"></label>
                     <label>Noise Reduction: <input type="range" class="slider" id="noise" min="0" max="100" value="0"></label>
+                    <label>Vignette: <input type="range" class="slider" id="vignette" min="0" max="100" value="0"></label>
                 </div>
             </div>
 
-            <canvas id="canvas"></canvas>
+            <div class="canvas-container">
+                <canvas id="canvas"></canvas>
+                <div class="loading" id="loadingIndicator">PROCESSING</div>
+            </div>
             
             <div style="text-align: center;">
-                <button onclick="resetImage()">RESET</button>
-                <button onclick="saveImage()">SAVE IMAGE</button>
+                <button id="resetButton">RESET</button>
+                <button id="saveButton">SAVE IMAGE</button>
             </div>
         </div>
     </div>
 
     <script>
+        // DOM Elements
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
+        const fileInput = document.getElementById('fileInput');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        const resetButton = document.getElementById('resetButton');
+        const saveButton = document.getElementById('saveButton');
+        const portraitToggle = document.getElementById('portraitToggle');
+        
+        // State variables
         let originalImage = null;
-
-        // Pixel Density Handler
-        function adjustDensity() {
-            if (!originalImage) return;
-            const density = document.getElementById('density').value / 100;
-            canvas.width = originalImage.width * density;
-            canvas.height = originalImage.height * density;
-            applyFilters();
+        let isPortraitMode = false;
+        let isProcessing = false;
+        const sliders = {
+            brightness: document.getElementById('brightness'),
+            contrast: document.getElementById('contrast'),
+            saturation: document.getElementById('saturation'),
+            sharpness: document.getElementById('sharpness'),
+            noise: document.getElementById('noise'),
+            vignette: document.getElementById('vignette')
+        };
+        
+        // Debounce function to reduce processing burden
+        function debounce(func, wait) {
+            let timeout;
+            return function() {
+                const context = this;
+                const args = arguments;
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(context, args), wait);
+            };
         }
 
-        document.getElementById('fileInput').addEventListener('change', function(e) {
-            const file = e.target.files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = function(event) {
-                    const img = new Image();
-                    img.onload = function() {
-                        originalImage = img;
-                        adjustDensity();
-                    }
-                    img.src = event.target.result;
-                }
-                reader.readAsDataURL(file);
-            }
-        });
-
-        document.querySelectorAll('.slider').forEach(slider => {
-            slider.addEventListener('input', () => {
-                if(slider.id === 'density') adjustDensity();
-                else applyFilters();
-            });
-        });
-
-        function applyFilters() {
-            if (!originalImage) return;
-
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(originalImage, 0, 0, canvas.width, canvas.height);
-
-            // Apply basic filters
-            const brightness = document.getElementById('brightness').value;
-            const contrast = document.getElementById('contrast').value;
-            ctx.filter = `brightness(${100 + parseInt(brightness)}%) contrast(${100 + parseInt(contrast)}%)`;
-
-            // Advanced processing
-            const sharpness = document.getElementById('sharpness').value;
-            const noise = document.getElementById('noise').value;
+        // Apply all filters with optimization
+        async function applyFilters() {
+            if (!originalImage || isProcessing) return;
             
-            if (noise > 0) {
-                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                applyNoiseReduction(imageData, noise);
+            isProcessing = true;
+            loadingIndicator.style.display = 'flex';
+            
+            // Use setTimeout to allow the loading indicator to render
+            setTimeout(async () => {
+                // Reset canvas and draw image
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(originalImage, 0, 0, canvas.width, canvas.height);
+                
+                // Get filter values
+                const brightness = parseInt(sliders.brightness.value);
+                const contrast = parseInt(sliders.contrast.value);
+                const saturation = parseInt(sliders.saturation.value);
+                const sharpness = parseInt(sliders.sharpness.value) / 100;
+                const noise = parseInt(sliders.noise.value);
+                const vignette = parseInt(sliders.vignette.value) / 100;
+                
+                // Apply basic filters using CSS filter for better performance
+                ctx.filter = `brightness(${100 + brightness}%) contrast(${100 + contrast}%) saturate(${100 + saturation}%)`;
+                ctx.drawImage(canvas, 0, 0);
+                ctx.filter = 'none';
+                
+                // Apply advanced filters only if needed
+                let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                
+                // Apply sharpness
+                if (sharpness > 0) {
+                    imageData = applySharpness(imageData, sharpness);
+                }
+                
+                // Apply noise reduction
+                if (noise > 0) {
+                    imageData = applyNoiseReduction(imageData, noise);
+                }
+                
+                // Apply vignette
+                if (vignette > 0) {
+                    imageData = applyVignette(imageData, vignette);
+                }
+                
+                // Apply portrait mode if enabled
+                if (isPortraitMode) {
+                    imageData = applyPortraitEffect(imageData);
+                }
+                
                 ctx.putImageData(imageData, 0, 0);
-            }
-
-            if (sharpness > 0) {
-                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                applySharpness(imageData, sharpness / 100);
-                ctx.putImageData(imageData, 0, 0);
-            }
+                
+                isProcessing = false;
+                loadingIndicator.style.display = 'none';
+            }, 10);
         }
 
-        // Noise Reduction Algorithm (Improved)
+        // Sharpness Algorithm (Optimized)
+        function applySharpness(imageData, amount) {
+            const data = imageData.data;
+            const width = imageData.width;
+            const height = imageData.height;
+            const result = new Uint8ClampedArray(data);
+            
+            // Apply convolution kernel for sharpening
+            const kernel = [
+                0, -1, 0,
+                -1, 5 + amount * 3, -1,
+                0, -1, 0
+            ];
+            
+            // Only process every 2nd pixel for performance in preview mode
+            const step = 2;
+            
+            for (let y = step; y < height - step; y += step) {
+                for (let x = step; x < width - step; x += step) {
+                    const centerPixel = (y * width + x) * 4;
+                    
+                    // Apply kernel to all channels except alpha
+                    for (let channel = 0; channel < 3; channel++) {
+                        let sum = 0;
+                        let kernelIndex = 0;
+                        
+                        for (let ky = -1; ky <= 1; ky++) {
+                            for (let kx = -1; kx <= 1; kx++) {
+                                const idx = ((y + ky) * width + (x + kx)) * 4 + channel;
+                                sum += data[idx] * kernel[kernelIndex];
+                                kernelIndex++;
+                            }
+                        }
+                        
+                        // Clamp values between 0-255
+                        result[centerPixel + channel] = Math.min(255, Math.max(0, sum));
+                        
+                        // Copy the processed pixel to adjacent pixels for faster processing
+                        if (x + 1 < width - step) {
+                            result[(y * width + (x + 1)) * 4 + channel] = result[centerPixel + channel];
+                        }
+                        if (y + 1 < height - step) {
+                            result[((y + 1) * width + x) * 4 + channel] = result[centerPixel + channel];
+                        }
+                    }
+                    
+                    // Keep alpha channel unchanged
+                    result[centerPixel + 3] = data[centerPixel + 3];
+                }
+            }
+            
+            imageData.data.set(result);
+            return imageData;
+        }
+
+        // Noise Reduction Algorithm (Optimized)
         function applyNoiseReduction(imageData, intensity) {
             const data = imageData.data;
-            const temp = new Uint8ClampedArray(data);
+            const width = imageData.width;
+            const height = imageData.height;
+            const result = new Uint8ClampedArray(data);
+            
+            // Adjust radius based on intensity (1-5 pixels)
             const radius = Math.ceil(intensity / 20);
+            const step = Math.max(1, Math.floor(6 - radius));
+            
+            for (let y = radius; y < height - radius; y += step) {
+                for (let x = radius; x < width - radius; x += step) {
+                    const centerPixel = (y * width + x) * 4;
+                    
+                    // Process each color channel separately
+                    for (let channel = 0; channel < 3; channel++) {
+                        let sum = 0;
+                        let count = 0;
+                        
+                        // Sample pixels in a small area around the current pixel
+                        for (let ky = -radius; ky <= radius; ky += step) {
+                            for (let kx = -radius; kx <= radius; kx += step) {
+                                const idx = ((y + ky) * width + (x + kx)) * 4 + channel;
+                                sum += data[idx];
+                                count++;
+                            }
+                        }
+                        
+                        // Calculate average color value
+                        const average = sum / count;
+                        
+                        // Apply smoothing
+                        const originalValue = data[centerPixel + channel];
+                        const smoothingFactor = intensity / 100;
+                        result[centerPixel + channel] = originalValue * (1 - smoothingFactor) + average * smoothingFactor;
+                        
+                        // Copy to adjacent pixels for faster processing
+                        if (x + step < width - radius) {
+                            for (let j = 1; j < step; j++) {
+                                if (x + j < width - radius) {
+                                    result[(y * width + (x + j)) * 4 + channel] = result[centerPixel + channel];
+                                }
+                            }
+                        }
+                        if (y + step < height - radius) {
+                            for (let j = 1; j < step; j++) {
+                                if (y + j < height - radius) {
+                                    result[((y + j) * width + x) * 4 + channel] = result[centerPixel + channel];
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Keep alpha channel unchanged
+                    result[centerPixel + 3] = data[centerPixel + 3];
+                }
+            }
+            
+            imageData.data.set(result);
+            return imageData;
+        }
 
-            for(let i = 0; i < data.length; i += 4) {
-                const x = (i/4) % imageData.width;
-                const y = Math.floor((i/4) / imageData.width);
-                
-                let r = 0, g = 0, b = 0, count = 0;
-                
-                for(let dy = -radius; dy <= radius; dy++) {
-                    for(let dx = -radius; dx <= radius; dx++) {
-                        const cx = x + dx;
-                        const cy = y + dy;
-                        if(cx >= 0 && cx < imageData.width && cy >= 0 && cy < imageData.height) {
-                            const idx = (cy * imageData.width + cx) * 4;
-                            r += temp[idx];
-                            g += temp[idx+1];
-                            b += temp[idx+2];
-                            count++;
+        // Vignette Effect
+        function applyVignette(imageData, intensity) {
+            const data = imageData.data;
+            const width = imageData.width;
+            const height = imageData.height;
+            const centerX = width / 2;
+            const centerY = height / 2;
+            const maxDistance = Math.sqrt(centerX * centerX + centerY * centerY);
+            
+            for (let y = 0; y < height; y += 2) {
+                for (let x = 0; x < width; x += 2) {
+                    const pixelIndex = (y * width + x) * 4;
+                    
+                    // Calculate distance from center
+                    const dx = x - centerX;
+                    const dy = y - centerY;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    
+                    // Calculate vignette factor
+                    const vignetteFactor = 1 - Math.pow(distance / maxDistance, 2) * intensity;
+                    
+                    // Apply vignette to RGB channels
+                    data[pixelIndex] *= vignetteFactor;     // R
+                    data[pixelIndex + 1] *= vignetteFactor; // G
+                    data[pixelIndex + 2] *= vignetteFactor; // B
+                    
+                    // Apply to adjacent pixels for faster processing
+                    if (x + 1 < width) {
+                        const rightPixel = pixelIndex + 4;
+                        data[rightPixel] *= vignetteFactor;
+                        data[rightPixel + 1] *= vignetteFactor;
+                        data[rightPixel + 2] *= vignetteFactor;
+                    }
+                    
+                    if (y + 1 < height) {
+                        const bottomPixel = ((y + 1) * width + x) * 4;
+                        data[bottomPixel] *= vignetteFactor;
+                        data[bottomPixel + 1] *= vignetteFactor;
+                        data[bottomPixel + 2] *= vignetteFactor;
+                        
+                        if (x + 1 < width) {
+                            const bottomRightPixel = ((y + 1) * width + (x + 1)) * 4;
+                            data[bottomRightPixel] *= vignetteFactor;
+                            data[bottomRightPixel + 1] *= vignetteFactor;
+                            data[bottomRightPixel + 2] *= vignetteFactor;
                         }
                     }
                 }
-                
-                data[i] = r/count;
-                data[i+1] = g/count;
-                data[i+2] = b/count;
             }
-        }
-
-        // Sharpness Algorithm
-        function applySharpness(imageData, amount) {
-            const data = imageData.data;
-            const temp = new Uint8ClampedArray(data);
             
-            for(let i = 0; i < data.length; i += 4) {
-                const avg = (temp[i] + temp[i+1] + temp[i+2]) / 3;
-                data[i] = temp[i] + (temp[i] - avg) * amount;
-                data[i+1] = temp[i+1] + (temp[i+1] - avg) * amount;
-                data[i+2] = temp[i+2] + (temp[i+2] - avg) * amount;
+            return imageData;
+        }
+
+        // Portrait Mode Effect (Skin tone enhancement and background blur)
+        function applyPortraitEffect(imageData) {
+            const data = imageData.data;
+            const width = imageData.width;
+            const height = imageData.height;
+            const result = new Uint8ClampedArray(data);
+            
+            // Skin tone detection and enhancement
+            for (let i = 0; i < data.length; i += 4) {
+                const r = data[i];
+                const g = data[i + 1];
+                const b = data[i + 2];
+                
+                // Simple skin tone detection (can be improved)
+                const isSkin = r > 95 && g > 40 && b > 20 && 
+                               r > g && r > b && 
+                               Math.abs(r - g) > 15;
+                
+                if (isSkin) {
+                    // Enhance skin tones
+                    result[i] = Math.min(255, r * 1.1);        // Slightly increase red
+                    result[i + 1] = Math.min(255, g * 1.05);   // Slightly increase green
+                    result[i + 2] = Math.min(255, b * 0.95);   // Slightly decrease blue
+                } else {
+                    // Apply slight blur to non-skin areas (background)
+                    const x = (i / 4) % width;
+                    const y = Math.floor((i / 4) / width);
+                    
+                    // Simple 3x3 box blur for background
+                    if (x > 0 && x < width - 1 && y > 0 && y < height - 1) {
+                        let sumR = 0, sumG = 0, sumB = 0;
+                        
+                        // Sample 3x3 area
+                        for (let ky = -1; ky <= 1; ky++) {
+                            for (let kx = -1; kx <= 1; kx++) {
+                                const idx = ((y + ky) * width + (x + kx)) * 4;
+                                sumR += data[idx];
+                                sumG += data[idx + 1];
+                                sumB += data[idx + 2];
+                            }
+                        }
+                        
+                        // Apply blur
+                        result[i] = sumR / 9;
+                        result[i + 1] = sumG / 9;
+                        result[i + 2] = sumB / 9;
+                    }
+                }
             }
+            
+            imageData.data.set(result);
+            return imageData;
         }
 
-        function resetImage() {
-            document.querySelectorAll('.slider').forEach(slider => {
-                slider.value = slider.id === 'density' ? 100 : 0;
+        // Load and process image
+        function loadImage(file) {
+            const reader = new FileReader();
+            
+            reader.onload = function(event) {
+                const img = new Image();
+                
+                img.onload = function() {
+                    originalImage = img;
+                    resetCanvas();
+                    applyFilters();
+                };
+                
+                img.src = event.target.result;
+            };
+            
+            reader.readAsDataURL(file);
+        }
+
+        // Reset canvas dimensions and draw original image
+        function resetCanvas() {
+            if (!originalImage) return;
+            
+            // Set canvas dimensions
+            canvas.width = originalImage.width;
+            canvas.height = originalImage.height;
+            
+            // Draw original image
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(originalImage, 0, 0, canvas.width, canvas.height);
+        }
+
+        // Reset all sliders to default values
+        function resetFilters() {
+            Object.values(sliders).forEach(slider => {
+                slider.value = slider.id === 'saturation' ? 0 : 
+                               (slider.id === 'sharpness' || slider.id === 'noise' || slider.id === 'vignette') ? 0 : 0;
             });
-            adjustDensity();
+            
+            isPortraitMode = false;
+            portraitToggle.classList.remove('active');
+            
+            resetCanvas();
+            applyFilters();
         }
 
+        // Save the processed image
         function saveImage() {
+            if (!originalImage) return;
+            
             const link = document.createElement('a');
             link.download = 'cyber-enhanced.png';
-            link.href = canvas.toDataURL();
+            link.href = canvas.toDataURL('image/png');
             link.click();
         }
+
+        // Event Listeners
+        fileInput.addEventListener('change', function(e) {
+            if (e.target.files && e.target.files[0]) {
+                loadImage(e.target.files[0]);
+            }
+        });
+
+        // Apply debounced filters when sliders change
+        const debouncedApplyFilters = debounce(applyFilters, 100);
+        Object.values(sliders).forEach(slider => {
+            slider.addEventListener('input', debouncedApplyFilters);
+        });
+
+        // Portrait mode toggle
+        portraitToggle.addEventListener('click', function() {
+            isPortraitMode = !isPortraitMode;
+            this.classList.toggle('active', isPortraitMode);
+            applyFilters();
+        });
+
+        // Reset button
+        resetButton.addEventListener('click', resetFilters);
+
+        // Save button
+        saveButton.addEventListener('click', saveImage);
+
+        // Handle drag and drop
+        const container = document.querySelector('.container');
+        
+        container.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            this.style.borderColor = var(--neon-purple);
+        });
+        
+        container.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            this.style.borderColor = '';
+        });
+        
+        container.addEventListener('drop', function(e) {
+            e.preventDefault();
+            this.style.borderColor = '';
+            
+            if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                loadImage(e.dataTransfer.files[0]);
+            }
+        });
     </script>
 </body>
-                                                                      </html>
+</html>
